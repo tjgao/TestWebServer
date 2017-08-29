@@ -75,18 +75,16 @@ func main() {
 	r.HandleFunc("/upload/{file}", FileServiceHandler)
 	r.HandleFunc("/", ShowWorkingHandler)
 	http.Handle("/", r)
-	if *ssl {
-		log.Printf("HTTPS Web server starts up, serving on port: %d", *port)
-	} else {
-		log.Printf("HTTP Web server starts up, serving on port: %d", *port)
-	}
 
 	var err error
 	if *ssl {
+		log.Printf("HTTPS Web server starts up, serving on port: %d", *port)
 		err = http.ListenAndServeTLS(":" + strconv.Itoa(*port), "ssl.crt", "ssl.key", nil)
 	} else {
+		log.Printf("HTTP Web server starts up, serving on port: %d", *port)
 		err = http.ListenAndServe(":" + strconv.Itoa(*port), nil)
 	}
+
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
