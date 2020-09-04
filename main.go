@@ -71,6 +71,12 @@ func MultishotsUploadSubHandler(path string, start int64, end int64, length int6
 		fmt.Fprintf(w, "failed to open file for writting")
 	} else {
 		defer f.Close()
+		// if this is the first write (start == 0) we need to truncate the file
+		// the reason is that, user may write files with the same names.
+		if start == 0 {
+			f.Truncate(0)
+			f.Seek(0, 0)
+		}
 		// seek to the start position first
 		_, e := f.Seek(start, 0)
 		if e != nil {
