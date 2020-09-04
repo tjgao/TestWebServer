@@ -26,6 +26,7 @@ func DownloadSubHandler(path string, w http.ResponseWriter, r *http.Request) {
 	st, err := os.Stat(path)
 	if os.IsNotExist(err) || st.Mode().IsDir() {
 		w.WriteHeader(http.StatusNotFound)
+		log.Debug("file ", path, " not found, return 404 error!")
 		fmt.Fprintf(w, "404 error, file not found!\n")
 		return
 	}
@@ -41,7 +42,7 @@ func ChunkedUploadSubHandler(path string, w http.ResponseWriter, r *http.Request
 	defer out.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		log.Error("failed to create file:", path)
+		log.Debug("failed to create file:", path)
 		fmt.Fprintf(w, "404 error, file cannot be created!\n")
 		return
 	}
@@ -67,7 +68,7 @@ func MultishotsUploadSubHandler(path string, start int64, end int64, length int6
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Error("failed to open file for writting: ", err)
+		log.Debug("failed to open file for writting: ", err)
 		fmt.Fprintf(w, "failed to open file for writting")
 	} else {
 		defer f.Close()
@@ -137,7 +138,7 @@ func FileServiceHandler(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PUT" && r.Method != "POST" {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			fmt.Fprintf(w, "Not allowed method!")
-			log.Error("the method is not allowed")
+			log.Debug("the method is not allowed")
 		} else {
 			val := r.Header.Get("Content-Range")
 			if val == "" {
@@ -149,7 +150,7 @@ func FileServiceHandler(w http.ResponseWriter, r *http.Request) {
 				var start, end int64
 				_, err := fmt.Sscanf(strings.TrimSpace(val), "bytes %d-%d/*", &start, &end)
 				if er != nil || err != nil || !validateRange(start, end) || length < 0 {
-					log.Error("error or invalid range: ", err)
+					log.Debug("error or invalid range: ", err)
 					w.WriteHeader(http.StatusInternalServerError)
 					fmt.Fprintf(w, "Severe internal error!")
 				} else {
@@ -176,9 +177,19 @@ func main() {
 		"debug": log.DebugLevel,
 	}
 
+	flag.Usage = func() {
+		fmt.Printf("This programm can be used as a testing tool to provide web services to our yoda audio server, \nsuch as playback and recording requests via http put or post, chunk transfer or multishot \ntransfer. It also has another mode, in which it can be used as a simple tool to \nshare some local folder to others via http access. But these two modes are exclusive.\n\n")
+		fmt.Printf("Usage of %s:\n\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
 	logLevel := flag.String("l", "info", "pick a log level, available levels are: panic, error, warn, info and debug")
+	addr := flag.String("addr", "", "Specify the address to be bound, if not specified, service will be bound to all available addresses")
 	port := flag.Int("p", 8080, "Port to serve on")
 	ssl := flag.Bool("ssl", false, "Use ssl")
+	logFile := flag.String("f", "", "Specify a log file name, if not specified, stdout will be used")
+	servDir := flag.String("d", "", "Specify a directory to serve. If specified, the program will act as a simple web server to serve accesses to the content in the directory. All other features will be turned off")
+
 	flag.Parse()
 
 	if level, ok := logLevelTable[*logLevel]; ok {
@@ -187,25 +198,39 @@ func main() {
 		log.Warn("unrecognized log level specified, use warn level instead")
 	}
 
-	// Make sure upload directory exist
-	if _, err := os.Stat("./upload"); os.IsNotExist(err) {
-		os.Mkdir("./upload", 0755)
+	lf := strings.TrimSpace(*logFile)
+	if lf != "" {
+		f, err := os.OpenFile(lf, os.O_WRONLY|os.O_CREATE, 0755)
+		if err != nil {
+			log.Warn("failed to open file (", lf, ") for log output, stdout will be used")
+		} else {
+			log.SetOutput(f)
+		}
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/upload/{file}", FileServiceHandler)
-	r.HandleFunc("/", ShowWorkingHandler)
-	r.HandleFunc("/cleanup", CleanupHandler)
-	http.Handle("/", r)
-	http.Handle("/browse/", http.StripPrefix("/browse/", http.FileServer(http.Dir("./upload/"))))
+	if *servDir == "" {
+		// Make sure upload directory exist
+		if _, err := os.Stat("./upload"); os.IsNotExist(err) {
+			os.Mkdir("./upload", 0755)
+		}
+
+		r.HandleFunc("/upload/{file}", FileServiceHandler)
+		r.HandleFunc("/", ShowWorkingHandler)
+		r.HandleFunc("/cleanup", CleanupHandler)
+		http.Handle("/", r)
+		http.Handle("/browse/", http.StripPrefix("/browse/", http.FileServer(http.Dir("./upload/"))))
+	} else {
+		http.Handle("/", http.FileServer(http.Dir(*servDir)))
+	}
 
 	var err error
 	if *ssl {
-		log.Info("HTTPS Web server starts up, serving on port: ", *port)
-		err = http.ListenAndServeTLS(":"+strconv.Itoa(*port), "ssl.crt", "ssl.key", nil)
+		log.Info("HTTPS Web server starts up, serving on port ", *port)
+		err = http.ListenAndServeTLS(*addr+":"+strconv.Itoa(*port), "ssl.crt", "ssl.key", nil)
 	} else {
-		log.Info("HTTP Web server starts up, serving on port: ", *port)
-		err = http.ListenAndServe(":"+strconv.Itoa(*port), nil)
+		log.Info("HTTP Web server starts up, serving on port ", *port)
+		err = http.ListenAndServe(*addr+":"+strconv.Itoa(*port), nil)
 	}
 
 	if err != nil {
